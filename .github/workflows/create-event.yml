@@ -1,0 +1,28 @@
+name: Crear evento Calendar (call Apps Script)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-event:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Make POST to Apps Script
+        env:
+          WEBAPP_URL: ${{ secrets.WEBAPP_URL }}
+          WEBAPP_SECRET: ${{ secrets.WEBAPP_SECRET }}
+          EVENT_TITLE: ${{ github.event.inputs.title || 'NO IR AL JUZGADO' }}
+          EVENT_START: ${{ github.event.inputs.start || '2025-09-29T10:00:00' }}
+          EVENT_END:   ${{ github.event.inputs.end || '2025-09-29T10:30:00' }}
+          EVENT_DESC:  ${{ github.event.inputs.description || 'Creado desde GitHub Actions' }}
+        run: |
+          # Construye el payload JSON
+          payload=$(jq -n --arg secret "$WEBAPP_SECRET" --arg title "$EVENT_TITLE" --arg start "$EVENT_START" --arg end "$EVENT_END" --arg desc "$EVENT_DESC" \
+            '{secret:$secret, title:$title, start:$start, end:$end, description:$desc}')
+
+          # Envía POST al Apps Script (Web App)
+          resp=$(curl -s -X POST -H "Content-Type: application/json" -d "$payload" "$WEBAPP_URL")
+
+          # Mostrar respuesta en log
+          echo "Response: $resp"
+          echo "$resp" > response.json
