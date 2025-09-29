@@ -2,27 +2,110 @@ name: Crear evento Calendar (call Apps Script)
 
 on:
   workflow_dispatch:
+    inputs:
+      title:
+        description: "Título del evento"
+        required: false
+        default: "NO IR AL JUZGADO"
+      start:
+        description: "Inicio (RFC3339, p.ej. 2025-09-29T10:00:00+02:00)"
+        required: false
+        default: "2025-09-29T10:00:00+02:00"
+      end:
+        description: "Fin (RFC3339, p.ej. 2025-09-29T10:30:00+02:00)"
+        required: false
+        default: "2025-09-29T10:30:00+02:00"
+      description:
+        description: "Descripción del evento"
+        required: false
+        default: "Creado desde GitHub Actions"
 
 jobs:
   create-event:
     runs-on: ubuntu-latest
+    env:
+      WEBAPP_URL: ${{ secrets.WEBAPP_URL }}
+      WEBAPP_SECRET: ${{ secrets.WEBAPP_SECRET }}
+      EVENT_TITLE: ${{ inputs.title }}
+      EVENT_START: ${{ inputs.start }}
+      EVENT_END:   ${{ inputs.end }}
+      EVENT_DESC:  ${{ inputs.description }}
+
     steps:
-      - name: Make POST to Apps Script
-        env:
-          WEBAPP_URL: ${{ secrets.WEBAPP_URL }}
-          WEBAPP_SECRET: ${{ secrets.WEBAPP_SECRET }}
-          EVENT_TITLE: ${{ github.event.inputs.title || 'NO IR AL JUZGADO' }}
-          EVENT_START: ${{ github.event.inputs.start || '2025-09-29T10:00:00' }}
-          EVENT_END:   ${{ github.event.inputs.end || '2025-09-29T10:30:00' }}
-          EVENT_DESC:  ${{ github.event.inputs.description || 'Creado desde GitHub Actions' }}
+      - name: Verificar variables requeridas
         run: |
-          # Construye el payload JSON
-          payload=$(jq -n --arg secret "$WEBAPP_SECRET" --arg title "$EVENT_TITLE" --arg start "$EVENT_START" --arg end "$EVENT_END" --arg desc "$EVENT_DESC" \
+          if [ -z "$WEBAPP_URL" ] || [ -z "$WEBAPP_SECRET" ]; then
+            echo "Faltan secrets WEBAPP_URL o WEBAPP_SECRET"; exit 1
+          fi
+
+      - name: Instalar jq (si no estuviera)
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y jq
+          fi
+
+      - name: Validar formato de fechas (RFC3339 básico)
+        run: |
+          for d in "$EVENT_START" "$EVENT_END"; do
+            # Acepta YYYY-MM-DDTHH:MM:SS o con zona (+HH:MM o Z)
+            if ! echo "$d" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([+][0-9]{2}:[0-9]{2}|Z)?$'; then
+              echo "Fecha inválida: $d"
+              exit 1
+            fi
+          done
+
+      - name: Construir payload JSON
+        id: build
+        run: |
+          payload=$(jq -n \
+            --arg secret "$WEBAPP_SECRET" \
+            --arg title  "$EVENT_TITLE" \
+            --arg start  "$EVENT_START" \
+            --arg end    "$EVENT_END" \
+            --arg desc   "$EVENT_DESC" \
             '{secret:$secret, title:$title, start:$start, end:$end, description:$desc}')
+          echo "$payload" > payload.json
+          echo "Payload:"
+          cat payload.json
 
-          # Envía POST al Apps Script (Web App)
-          resp=$(curl -s -X POST -H "Content-Type: application/json" -d "$payload" "$WEBAPP_URL")
-
-          # Mostrar respuesta en log
+      - name: POST a Apps Script
+        id: call
+        run: |
+          # --fail-with-body hace que curl retorne código !=0 si HTTP >=400
+          resp=$(curl --silent --show-error --fail-with-body \
+            -X POST -H "Content-Type: application/json" \
+            -d @payload.json "$WEBAPP_URL")
           echo "Response: $resp"
           echo "$resp" > response.json
+
+      - name: Validar respuesta (espera ok=true)
+        run: |
+          ok=$(jq -r '.ok // empty' response.json)
+          if [ "$ok" != "true" ]; then
+            echo "La respuesta no es ok=true"
+            cat response.json
+            exit 1
+          fi
+          # Exportar campos útiles a outputs
+          id=$(jq -r '.eventId // empty' response.json)
+          link=$(jq -r '.htmlLink // empty' response.json)
+          echo "eventId=$id"   >> "$GITHUB_OUTPUT"
+          echo "htmlLink=$link" >> "$GITHUB_OUTPUT"
+
+      - name: Resumen
+        run: |
+          {
+            echo "### Evento creado correctamente"
+            echo ""
+            echo "- **Título:** $EVENT_TITLE"
+            echo "- **Inicio:** $EVENT_START"
+            echo "- **Fin:** $EVENT_END"
+            echo "- **Descripción:** $EVENT_DESC"
+            if [ -s response.json ]; then
+              id=$(jq -r '.eventId // "-" ' response.json)
+              link=$(jq -r '.htmlLink // "-" ' response.json)
+              echo "- **ID:** \`$id\`"
+              echo "- **Enlace:** $link"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
