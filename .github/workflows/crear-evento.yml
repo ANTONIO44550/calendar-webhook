@@ -1,12 +1,12 @@
-name: Depurar WebApp Calendar
+name: Crear evento en Google Calendar
 
 on:
   workflow_dispatch:
     inputs:
       title:
-        description: "Título"
+        description: "Título del evento"
         required: false
-        default: "Prueba desde GitHub"
+        default: "NO IR AL JUZGADO"
       start:
         description: "Inicio (RFC3339, ej. 2025-10-01T12:00:00+02:00)"
         required: true
@@ -16,26 +16,19 @@ on:
       description:
         description: "Descripción"
         required: false
-        default: "Evento de prueba"
+        default: "Creado desde GitHub Actions"
 
 jobs:
-  debug:
+  create-event:
     runs-on: ubuntu-latest
     steps:
-      - name: Comprobar secrets presentes
+      - name: Check required secrets
         run: |
-          test -n "${{ secrets.WEBAPP_URL }}"    || { echo "FALTA secret WEBAPP_URL"; exit 1; }
-          test -n "${{ secrets.WEBAPP_SECRET }}" || { echo "FALTA secret WEBAPP_SECRET"; exit 1; }
+          test -n "${{ secrets.WEBAPP_URL }}"    || { echo "Falta secret WEBAPP_URL"; exit 1; }
+          test -n "${{ secrets.WEBAPP_SECRET }}" || { echo "Falta secret WEBAPP_SECRET"; exit 1; }
           echo "Secrets OK"
 
-      - name: GET de salud (comprobar versión y URL)
-        run: |
-          echo "Llamando GET a: ${{ secrets.WEBAPP_URL }}"
-          curl -sS -L -D headers_get.txt -o body_get.txt "${{ secrets.WEBAPP_URL }}"
-          echo "== Cabeceras GET ==" && cat headers_get.txt
-          echo "== Cuerpo GET ==" && cat body_get.txt || true
-
-      - name: Construir payload
+      - name: Build payload
         run: |
           cat > payload.json <<'JSON'
           {
@@ -46,66 +39,43 @@ jobs:
             "description": "${{ github.event.inputs.description }}"
           }
           JSON
-          echo "== Payload a enviar ==" && cat payload.json
+          echo "Payload:"
+          cat payload.json
 
-      - name: POST al WebApp (con redirecciones y verboso)
+      - name: Call WebApp (POST with redirects kept as POST)
         run: |
           set -e
-          curl -v -sS -L --fail-with-body \
+          resp="$(curl -sS -L --post301 --post302 --post303 --fail-with-body \
             -X POST -H "Content-Type: application/json" \
-            -d @payload.json "${{ secrets.WEBAPP_URL }}" \
-            -D headers_post.txt -o body_post.txt || true
+            -d @payload.json "${{ secrets.WEBAPP_URL }}")"
+          echo "$resp" | tee response.json
 
-          echo "== Cabeceras POST ==" && cat headers_post.txt
-          echo "== Cuerpo POST ==" && cat body_post.txt
-
-      - name: Validar JSON (si existe) y ok=true
+      - name: Validate response (ok=true)
         run: |
           if ! command -v jq >/dev/null; then sudo apt-get update -y && sudo apt-get install -y jq; fi
-          if jq empty body_post.txt 2>/dev/null; then
-            ok=$(jq -r '.ok // empty' body_post.txt)
-            echo "ok=$ok"
-            if [ "$ok" != "true" ] && [ "$ok" != "True" ]; then
-              echo "Respuesta no OK:"
-              cat body_post.txt
-              exit 1
-            fi
-          else
-            echo "El cuerpo POST no es JSON. Revísalo arriba."
+          if ! jq empty response.json >/dev/null 2>&1; then
+            echo "El cuerpo no es JSON:"
+            cat response.json
+            exit 1
+          fi
+          ok=$(jq -r '.ok // empty' response.json)
+          if [ "$ok" != "true" ] && [ "$ok" != "True" ]; then
+            echo "Respuesta no OK:"
+            cat response.json
             exit 1
           fi
 
       - name: Summary
         run: |
           {
-            echo "## Depuración del WebApp"
+            echo "## ✅ Evento creado"
             echo
-            echo "### GET"
-            echo '**URL:**' "${{ secrets.WEBAPP_URL }}"
+            echo "- **Título:** ${{ github.event.inputs.title }}"
+            echo "- **Inicio:** ${{ github.event.inputs.start }}"
+            echo "- **Fin:**    ${{ github.event.inputs.end }}"
             echo
-            echo '**Cabeceras GET:**'
-            echo '```'
-            sed -n '1,200p' headers_get.txt
-            echo '```'
-            echo
-            echo '**Cuerpo GET:**'
-            echo '```'
-            sed -n '1,200p' body_get.txt
-            echo '```'
-            echo
-            echo "### POST"
-            echo '**Payload:**'
+            echo "### Respuesta del WebApp"
             echo '```json'
-            sed -n '1,200p' payload.json
-            echo '```'
-            echo
-            echo '**Cabeceras POST:**'
-            echo '```'
-            sed -n '1,200p' headers_post.txt
-            echo '```'
-            echo
-            echo '**Cuerpo POST:**'
-            echo '```'
-            sed -n '1,200p' body_post.txt
+            cat response.json
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
