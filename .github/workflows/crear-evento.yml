@@ -22,33 +22,30 @@ jobs:
   create-event:
     runs-on: ubuntu-latest
     steps:
-      - name: Construir payload
+      - name: Build payload
         run: |
           cat > payload.json <<'JSON'
           {
-            "secret":      "${{ secrets.WEBAPP_SECRET }}",
-            "title":       "${{ github.event.inputs.title }}",
-            "start":       "${{ github.event.inputs.start }}",
-            "end":         "${{ github.event.inputs.end }}",
+            "secret": "${{ secrets.WEBAPP_SECRET }}",
+            "title": "${{ github.event.inputs.title }}",
+            "start": "${{ github.event.inputs.start }}",
+            "end": "${{ github.event.inputs.end }}",
             "description": "${{ github.event.inputs.description }}"
           }
           JSON
           echo "Payload listo:"
           cat payload.json
 
-      - name: Llamar al WebApp (POST con redirecciones)
+      - name: Call WebApp (POST with redirects)
         run: |
           set -e
-          # -L sigue redirecciones (302 -> googleusercontent)
-          # --fail-with-body hace que el job falle si HTTP>=400 pero imprima el cuerpo
           resp="$(curl -sS -L --fail-with-body \
             -X POST -H "Content-Type: application/json" \
             -d @payload.json "${{ secrets.WEBAPP_URL }}")"
           echo "$resp" | tee response.json
 
-      - name: Validar respuesta
+      - name: Validate response
         run: |
-          # Si no es JSON con ok=true, fallamos mostrando la respuesta
           if ! command -v jq >/dev/null; then sudo apt-get update -y && sudo apt-get install -y jq; fi
           ok=$(jq -r '.ok // empty' response.json || true)
           if [ "$ok" != "true" ] && [ "$ok" != "True" ]; then
@@ -57,14 +54,14 @@ jobs:
             exit 1
           fi
 
-      - name: Resumen
+      - name: Summary
         run: |
           {
             echo "## ✅ Evento creado"
             echo
             echo '- **Título:**' "${{ github.event.inputs.title }}"
             echo '- **Inicio:**' "${{ github.event.inputs.start }}"
-            echo '- **Fin:**'    "${{ github.event.inputs.end }}"
+            echo '- **Fin:**' "${{ github.event.inputs.end }}"
             echo
             echo "### Respuesta del WebApp"
             echo '```json'
