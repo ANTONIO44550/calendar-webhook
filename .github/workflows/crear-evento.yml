@@ -1,0 +1,39 @@
+name: Crear evento en Google Calendar
+
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: "Título del evento"
+        required: false
+        default: "NO IR AL JUZGADO"
+      start:
+        description: "Inicio (ejemplo: 2025-10-05T10:00:00+02:00)"
+        required: true
+      end:
+        description: "Fin (ejemplo: 2025-10-05T11:00:00+02:00)"
+        required: true
+      description:
+        description: "Descripción"
+        required: false
+        default: "Creado desde GitHub Actions"
+
+jobs:
+  create-event:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Construir payload
+        run: |
+          echo "{
+            \"secret\": \"${{ secrets.WEBAPP_SECRET }}\",
+            \"title\": \"${{ github.event.inputs.title }}\",
+            \"start\": \"${{ github.event.inputs.start }}\",
+            \"end\": \"${{ github.event.inputs.end }}\",
+            \"description\": \"${{ github.event.inputs.description }}\"
+          }" > payload.json
+          cat payload.json
+
+      - name: Llamar al WebApp
+        run: |
+          curl -s -X POST -H "Content-Type: application/json" \
+            -d @payload.json "${{ secrets.WEBAPP_URL }}"
